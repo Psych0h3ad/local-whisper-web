@@ -9,9 +9,10 @@ Local Whisper Web application code is licensed under MIT. The following componen
 | Transformers.js | 3.8.1 | Apache-2.0 | https://github.com/huggingface/transformers.js |
 | ONNX Runtime Web | 1.22.0-dev.20250409-89f8206ba4 | MIT | https://github.com/microsoft/onnxruntime |
 | Hugging Face Jinja | 0.5.9 | MIT | https://github.com/huggingface/huggingface.js/tree/main/packages/jinja |
-| React / React DOM | 19.2.8 | MIT | https://github.com/facebook/react |
+| React / React DOM / React Server DOM Webpack | 19.2.8 | MIT | https://github.com/facebook/react |
 | Next.js | 16.3.0 | MIT | https://github.com/vercel/next.js |
 | vinext | 0.0.45 | MIT | https://github.com/cloudflare/vinext |
+| Vite React Server Components plugin | 0.5.26 | MIT | https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-rsc |
 | Geist / Geist Mono webfonts | Build-time snapshot | OFL-1.1 | https://github.com/vercel/geist-font |
 
 The ONNX Runtime WebAssembly binary and its JavaScript factory are copied into the application build from the installed Transformers.js package so they can be served from the application origin.
@@ -21,9 +22,10 @@ Full license texts and copyright notices for these major browser-delivered compo
 - [Apache License 2.0 — Transformers.js and upstream Whisper model weights](public/third-party-licenses/Apache-2.0.txt)
 - [MIT — ONNX Runtime](public/third-party-licenses/MIT-ONNX-Runtime.txt)
 - [MIT — Hugging Face Jinja](public/third-party-licenses/MIT-Hugging-Face-Jinja.txt)
-- [MIT — React and React DOM](public/third-party-licenses/MIT-React.txt)
+- [MIT — React, React DOM, and React Server DOM Webpack](public/third-party-licenses/MIT-React.txt)
 - [MIT — Next.js](public/third-party-licenses/MIT-Next.js.txt)
 - [MIT — vinext](public/third-party-licenses/MIT-vinext.txt)
+- [MIT — Vite React Server Components plugin](public/third-party-licenses/MIT-Vite-RSC.txt)
 - [SIL Open Font License 1.1 — Geist and Geist Mono](public/third-party-licenses/OFL-1.1-Geist.txt)
 
 ## Whisper models

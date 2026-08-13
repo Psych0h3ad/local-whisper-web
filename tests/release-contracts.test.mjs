@@ -46,6 +46,7 @@ test("ships major third-party license texts in the deployment artifact", async (
     "MIT-Next.js.txt",
     "MIT-ONNX-Runtime.txt",
     "MIT-React.txt",
+    "MIT-Vite-RSC.txt",
     "MIT-vinext.txt",
     "OFL-1.1-Geist.txt",
     "README.txt",
@@ -79,6 +80,7 @@ test("ships major third-party license texts in the deployment artifact", async (
     ["@huggingface/jinja", "Hugging Face Jinja"],
     ["next", "Next.js"],
     ["vinext", "vinext"],
+    ["@vitejs/plugin-rsc", "Vite React Server Components plugin"],
   ]) {
     const version = lockfile.packages[`node_modules/${packageName}`].version;
     assert.ok(
@@ -92,7 +94,15 @@ test("ships major third-party license texts in the deployment artifact", async (
     lockfile.packages["node_modules/react-dom"].version,
     reactVersion,
   );
-  assert.ok(notices.includes(`| React / React DOM | ${reactVersion} |`));
+  assert.equal(
+    lockfile.packages["node_modules/react-server-dom-webpack"].version,
+    reactVersion,
+  );
+  assert.ok(
+    notices.includes(
+      `| React / React DOM / React Server DOM Webpack | ${reactVersion} |`,
+    ),
+  );
 });
 
 test(

@@ -19,12 +19,16 @@ MIT-Hugging-Face-Jinja.txt
 MIT-React.txt
   - React 19.2.8
   - React DOM 19.2.8
+  - React Server DOM Webpack 19.2.8
 
 MIT-Next.js.txt
   - Next.js 16.3.0
 
 MIT-vinext.txt
   - vinext 0.0.45
+
+MIT-Vite-RSC.txt
+  - @vitejs/plugin-rsc 0.5.26
 
 OFL-1.1-Geist.txt
   - Geist and Geist Mono webfonts
