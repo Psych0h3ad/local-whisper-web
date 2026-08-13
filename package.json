@@ -1,6 +1,6 @@
 {
   "name": "local-whisper-web",
-  "version": "0.1.0-beta.1",
+  "version": "0.2.0-beta.1",
   "description": "Install-free, privacy-first Whisper transcription that runs entirely in the browser.",
   "private": true,
   "license": "MIT",

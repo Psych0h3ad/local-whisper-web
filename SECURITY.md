@@ -12,4 +12,8 @@ Never attach confidential audio, personal data, access tokens, internal URLs, or
 
 ## Security boundaries
 
-The application intentionally has no audio upload endpoint, account system, or transcript database. It still depends on the browser, the hosting origin, Hugging Face model delivery, npm dependencies, and the user’s device security. Review `package-lock.json`, pinned model revisions, and `THIRD_PARTY_NOTICES.md` when updating the supply chain.
+The application intentionally has no media upload endpoint, account system, or transcript database. Audio files, video files, microphone recordings, decoded samples, and transcripts remain under browser/device control and are not included in application network requests.
+
+Microphone access is requested only after an explicit record action, over a secure context, and with audio-only constraints. The application does not request camera, screen-capture, system-audio, or browser-tab-audio access. It stops acquired microphone tracks after recording finishes, is cancelled, fails, or the relevant page component closes. Browser and operating-system permissions, extensions, device-management software, and temporary media buffers remain outside the application’s security boundary.
+
+The application still depends on the browser and its media decoders, the hosting origin, Hugging Face model delivery, npm dependencies, and the user’s device security. Review `package-lock.json`, pinned model revisions, and `THIRD_PARTY_NOTICES.md` when updating the supply chain.

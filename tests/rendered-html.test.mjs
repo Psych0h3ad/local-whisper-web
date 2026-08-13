@@ -57,7 +57,10 @@ test("renders the Local Whisper product page", async () => {
   assert.match(html, /<html[^>]+lang="ja"/i);
   assert.match(html, /<title>Local Whisper — 音声を、外に出さず文字にする<\/title>/i);
   assert.match(html, /声を、/);
-  assert.match(html, /音声と文字は、このブラウザの外へ出ません/);
+  assert.match(html, /素材と文字は、アプリのサーバーへ送信しません/);
+  assert.match(html, /音声・動画をドロップ/);
+  assert.match(html, /この場で録音/);
+  assert.match(html, /音声25 MB \/ 動画100 MB/);
   assert.match(html, /文字起こしを開始/);
   assert.match(html, /PRIVACY &amp; LIMITS/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|react-loading-skeleton/i);
@@ -133,6 +136,7 @@ test("adds browser hardening headers without blocking model downloads", async ()
   assert.match(csp, /connect-src[^;]*https:\/\/huggingface\.co/);
   assert.match(csp, /connect-src[^;]*https:\/\/\*\.hf\.co/);
   assert.match(permissions, /camera=\(\)/);
-  assert.match(permissions, /microphone=\(\)/);
+  assert.match(permissions, /display-capture=\(\)/);
+  assert.match(permissions, /microphone=\(self\)/);
   assert.match(permissions, /clipboard-write=\(self\)/);
 });
