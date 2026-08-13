@@ -10,6 +10,7 @@
   --line-dark: #625f58;
   --orange: #b33a1b;
   --orange-dark: #8f2d14;
+  --orange-pale: #f2d9cf;
   --teal: #14776e;
   --teal-pale: #d8e9e4;
   --yellow: #f2c94c;
@@ -376,6 +377,14 @@ label:has(input:focus-visible) {
   transition: background 160ms ease, border-color 160ms ease, transform 160ms ease;
 }
 
+.source-picker {
+  margin-top: 24px;
+}
+
+.source-picker .drop-zone {
+  margin-top: 0;
+}
+
 .drop-zone:hover,
 .drop-zone.is-dragging {
   background: #f7efe9;
@@ -423,6 +432,78 @@ label:has(input:focus-visible) {
   font-size: 9px;
   letter-spacing: 0.04em;
   margin-top: 13px;
+}
+
+.source-divider {
+  align-items: center;
+  color: var(--line-dark);
+  display: flex;
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 8px;
+  gap: 12px;
+  letter-spacing: 0.08em;
+  margin: 12px 0;
+}
+
+.source-divider::before,
+.source-divider::after {
+  background: var(--line);
+  content: "";
+  flex: 1;
+  height: 1px;
+}
+
+.record-button {
+  align-items: center;
+  background: var(--white);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  display: flex;
+  gap: 13px;
+  min-height: 62px;
+  padding: 10px 15px;
+  text-align: left;
+  transition: background 140ms ease, border-color 140ms ease;
+  width: 100%;
+}
+
+.record-button:hover:not(:disabled) {
+  background: #f7efe9;
+  border-color: var(--orange);
+}
+
+.record-button:disabled {
+  color: var(--line-dark);
+}
+
+.record-button > span:last-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.record-button strong {
+  font-size: 12px;
+}
+
+.record-button small {
+  color: var(--ink-soft);
+  font-size: 9px;
+  margin-top: 4px;
+}
+
+.record-dot {
+  background: var(--orange);
+  border: 5px solid var(--orange-pale);
+  border-radius: 50%;
+  box-sizing: content-box;
+  flex: 0 0 auto;
+  height: 11px;
+  width: 11px;
+}
+
+.record-button:disabled .record-dot {
+  background: var(--line-dark);
+  border-color: var(--paper);
 }
 
 .selected-file {
@@ -499,10 +580,17 @@ label:has(input:focus-visible) {
   color: var(--orange);
 }
 
-.selected-file audio {
+.selected-file audio,
+.selected-file video {
   height: 34px;
   margin-top: 15px;
   width: 100%;
+}
+
+.selected-file video {
+  background: var(--ink);
+  height: auto;
+  max-height: 210px;
 }
 
 .control-grid {
@@ -653,7 +741,8 @@ label:has(input:focus-visible) {
 
 .empty-view,
 .process-view,
-.message-view {
+.message-view,
+.recording-view {
   align-items: center;
   display: flex;
   flex-direction: column;
@@ -687,11 +776,48 @@ label:has(input:focus-visible) {
 
 .empty-view p,
 .process-view > p,
-.message-view p {
+.message-view p,
+.recording-view p {
   color: var(--ink-soft);
   font-size: 12px;
   line-height: 1.8;
   margin: 11px 0 0;
+}
+
+.recording-view h2 {
+  font-size: 26px;
+}
+
+.recording-orb {
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  display: flex;
+  height: 116px;
+  justify-content: center;
+  margin-bottom: 30px;
+  width: 116px;
+}
+
+.recording-orb span {
+  animation: recording-pulse 1.2s ease-out infinite;
+  background: var(--orange);
+  border-radius: 50%;
+  height: 28px;
+  width: 28px;
+}
+
+.recording-clock {
+  color: var(--orange-dark);
+  font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+  font-size: 18px;
+  margin-top: 14px;
+}
+
+.recording-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 22px;
 }
 
 .empty-specs {
@@ -1125,6 +1251,18 @@ footer > a:last-child {
   }
 }
 
+@keyframes recording-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(210 76 30 / 40%);
+  }
+  70% {
+    box-shadow: 0 0 0 18px rgb(210 76 30 / 0%);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(210 76 30 / 0%);
+  }
+}
+
 @media (max-width: 1040px) {
   .site-shell {
     padding: 0 28px;
@@ -1326,7 +1464,9 @@ footer > a:last-child {
   .brand-wave,
   .shield-mark,
   .done-badge,
-  .message-mark {
+  .message-mark,
+  .record-dot,
+  .recording-orb {
     border: 1px solid ButtonText;
   }
 

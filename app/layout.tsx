@@ -3,7 +3,7 @@ import "./globals.css";
 
 const title = "Local Whisper — 音声を、外に出さず文字にする";
 const description =
-  "インストールもログインも不要。音声をサーバーへ送らず、ブラウザ内のWhisperで文字起こしします。";
+  "インストールもログインも不要。音声・動画・マイク録音を送信せず、ブラウザ内のWhisperで文字起こしします。";
 
 const LOCAL_METADATA_ORIGIN = "http://localhost:3000";
 

@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ChangeEvent,
   type DragEvent,
 } from "react";
@@ -14,10 +15,18 @@ import {
   decodeAudioFile,
   formatBytes,
   formatDuration,
+  getMediaKind,
   type DecodedAudio,
+  type MediaKind,
 } from "./lib/audio";
 import {
+  chooseRecordingMimeType,
+  microphoneErrorMessage,
+  recordingFileName,
+} from "./lib/recording";
+import {
   LANGUAGE_OPTIONS,
+  MAX_AUDIO_SECONDS,
   MODEL_CACHE_NAME,
   MODEL_OPTIONS,
   type Backend,
@@ -35,9 +44,13 @@ type Stage =
   | "error"
   | "cancelled";
 
+type RecordingPhase = "idle" | "requesting" | "recording" | "stopping";
+type SourceKind = MediaKind | "recording";
+
 interface SelectedAudio extends DecodedAudio {
   file: File;
   url: string;
+  sourceKind: SourceKind;
 }
 
 interface ResultMeta {
@@ -75,6 +88,23 @@ interface WorkerEvent {
 
 const REPOSITORY_URL = "https://github.com/psych0h3ad/local-whisper-web";
 
+function subscribeToRecordingCapability(): () => void {
+  return () => undefined;
+}
+
+function getRecordingCapability(): boolean | null {
+  if (typeof window === "undefined") return null;
+  return (
+    window.isSecureContext &&
+    typeof MediaRecorder !== "undefined" &&
+    Boolean(navigator.mediaDevices?.getUserMedia)
+  );
+}
+
+function getServerRecordingCapability(): null {
+  return null;
+}
+
 function cleanFileStem(fileName: string): string {
   const withoutExtension = fileName.replace(/\.[^.]+$/, "");
   return (
@@ -109,6 +139,15 @@ export default function LocalWhisper() {
   const [gpuAvailable, setGpuAvailable] = useState<boolean | null>(null);
   const [cacheMessage, setCacheMessage] = useState("");
   const [isClearingCache, setIsClearingCache] = useState(false);
+  const [sourceStatus, setSourceStatus] = useState("");
+  const [recordingPhase, setRecordingPhase] =
+    useState<RecordingPhase>("idle");
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const recordingSupported = useSyncExternalStore(
+    subscribeToRecordingCapability,
+    getRecordingCapability,
+    getServerRecordingCapability,
+  );
 
   const workerRef = useRef<Worker | null>(null);
   const requestIdRef = useRef(0);
@@ -116,6 +155,8 @@ export default function LocalWhisper() {
   const objectUrlRef = useRef<string | null>(null);
   const startedAtRef = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const recordButtonRef = useRef<HTMLButtonElement | null>(null);
+  const startButtonRef = useRef<HTMLButtonElement | null>(null);
   const pendingAudioRef = useRef<Float32Array | null>(null);
   const requestConfigRef = useRef<RequestConfig | null>(null);
   const requestedBackendRef = useRef<Backend>("wasm");
@@ -129,12 +170,21 @@ export default function LocalWhisper() {
   const spawnWorkerRef = useRef<
     (backend: Backend, requestId: number) => Worker | null
   >(() => null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const microphoneStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingStartedAtRef = useRef(0);
+  const recordingTimerRef = useRef<number | null>(null);
+  const recordingStopTimerRef = useRef<number | null>(null);
+  const recordingSessionRef = useRef(0);
+  const discardRecordingRef = useRef(false);
 
   const isBusy =
     stage === "decoding" ||
     stage === "loading-model" ||
     stage === "transcribing";
-  const isLocked = isBusy || isClearingCache;
+  const isRecordingActive = recordingPhase !== "idle";
+  const isLocked = isBusy || isClearingCache || isRecordingActive;
 
   useEffect(() => {
     let active = true;
@@ -179,9 +229,40 @@ export default function LocalWhisper() {
   }, [stage]);
 
   useEffect(() => {
+    const stopRecordingResources = () => {
+      recordingSessionRef.current += 1;
+      discardRecordingRef.current = true;
+      if (recordingTimerRef.current !== null) {
+        window.clearInterval(recordingTimerRef.current);
+      }
+      if (recordingStopTimerRef.current !== null) {
+        window.clearTimeout(recordingStopTimerRef.current);
+      }
+      const recorder = mediaRecorderRef.current;
+      if (recorder) {
+        recorder.ondataavailable = null;
+        recorder.onstop = null;
+        recorder.onerror = null;
+        if (recorder.state !== "inactive") recorder.stop();
+      }
+      mediaRecorderRef.current = null;
+      recordingChunksRef.current = [];
+      microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+      microphoneStreamRef.current = null;
+    };
+    const handlePageHide = () => {
+      stopRecordingResources();
+      setRecordingSeconds(0);
+      setRecordingPhase("idle");
+    };
+
+    window.addEventListener("pagehide", handlePageHide);
     return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      decodeIdRef.current += 1;
       workerRef.current?.terminate();
       if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+      stopRecordingResources();
     };
   }, []);
 
@@ -435,35 +516,71 @@ export default function LocalWhisper() {
     setFellBack(false);
     setCopyLabel("コピー");
     setError("");
+    setSourceStatus("");
+  }, []);
+
+  const clearSelectedSource = useCallback(() => {
+    decodeIdRef.current += 1;
+    pendingAudioRef.current = null;
+    requestConfigRef.current = null;
+    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
+    objectUrlRef.current = null;
+    setSelectedAudio(null);
   }, []);
 
   const loadFile = useCallback(
-    async (file?: File) => {
-      if (!file || isLocked) return;
+    async (
+      file?: File,
+      sourceKind?: SourceKind,
+      allowWhileRecording = false,
+      knownDuration?: number,
+    ) => {
+      if (!file || (isLocked && !allowWhileRecording)) return;
       const decodeId = ++decodeIdRef.current;
+      const resolvedSourceKind = sourceKind ?? getMediaKind(file);
+      if (resolvedSourceKind === "video") {
+        // Video containers are decoded as one in-memory buffer. Release a
+        // loaded model first so managed/low-memory machines keep more headroom.
+        destroyWorker();
+      }
       setStage("decoding");
       resetOutput();
 
       try {
-        const decoded = await decodeAudioFile(file);
+        const decoded = await decodeAudioFile(file, knownDuration);
         if (decodeId !== decodeIdRef.current) return;
 
         if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
         const url = URL.createObjectURL(file);
         objectUrlRef.current = url;
-        setSelectedAudio({ file, url, ...decoded });
+        setSelectedAudio({
+          file,
+          url,
+          sourceKind: resolvedSourceKind,
+          ...decoded,
+        });
         setStage("idle");
+        setSourceStatus(
+          resolvedSourceKind === "recording"
+            ? "録音を読み込みました。文字起こしを開始できます。"
+            : resolvedSourceKind === "video"
+              ? "動画の音声トラックを読み込みました。"
+              : "音声を読み込みました。",
+        );
+        if (resolvedSourceKind === "recording") {
+          window.requestAnimationFrame(() => startButtonRef.current?.focus());
+        }
       } catch (caught) {
         if (decodeId !== decodeIdRef.current) return;
         const message =
           caught instanceof AudioValidationError
             ? caught.message
-            : "音声ファイルを読み込めませんでした。";
+            : "音声を読み込めませんでした。";
         setError(message);
         setStage("error");
       }
     },
-    [isLocked, resetOutput],
+    [destroyWorker, isLocked, resetOutput],
   );
 
   const onFileInput = (event: ChangeEvent<HTMLInputElement>) => {
@@ -479,14 +596,224 @@ export default function LocalWhisper() {
 
   const removeFile = () => {
     if (isLocked) return;
-    decodeIdRef.current += 1;
-    pendingAudioRef.current = null;
-    requestConfigRef.current = null;
-    if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-    objectUrlRef.current = null;
-    setSelectedAudio(null);
+    clearSelectedSource();
     resetOutput();
     setStage("idle");
+  };
+
+  const clearRecordingTimers = useCallback(() => {
+    if (recordingTimerRef.current !== null) {
+      window.clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    if (recordingStopTimerRef.current !== null) {
+      window.clearTimeout(recordingStopTimerRef.current);
+      recordingStopTimerRef.current = null;
+    }
+  }, []);
+
+  const releaseMicrophone = useCallback(() => {
+    microphoneStreamRef.current?.getTracks().forEach((track) => track.stop());
+    microphoneStreamRef.current = null;
+  }, []);
+
+  const startRecording = useCallback(async () => {
+    if (isLocked || recordingSupported !== true) return;
+
+    const session = ++recordingSessionRef.current;
+    discardRecordingRef.current = false;
+    setRecordingSeconds(0);
+    setRecordingPhase("requesting");
+    setError("");
+    setSourceStatus("");
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          autoGainControl: true,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+        video: false,
+      });
+    } catch (caught) {
+      if (recordingSessionRef.current !== session) return;
+      setRecordingPhase("idle");
+      setError(microphoneErrorMessage(caught));
+      setStage("error");
+      window.requestAnimationFrame(() => recordButtonRef.current?.focus());
+      return;
+    }
+
+    if (recordingSessionRef.current !== session) {
+      stream.getTracks().forEach((track) => track.stop());
+      return;
+    }
+
+    microphoneStreamRef.current = stream;
+    const requestedMimeType = chooseRecordingMimeType((mimeType) =>
+      MediaRecorder.isTypeSupported(mimeType),
+    );
+
+    let recorder: MediaRecorder;
+    try {
+      recorder = new MediaRecorder(
+        stream,
+        {
+          audioBitsPerSecond: 64_000,
+          ...(requestedMimeType ? { mimeType: requestedMimeType } : {}),
+        },
+      );
+    } catch {
+      try {
+        recorder = new MediaRecorder(stream);
+      } catch (caught) {
+        releaseMicrophone();
+        setRecordingPhase("idle");
+        setError(microphoneErrorMessage(caught));
+        setStage("error");
+        window.requestAnimationFrame(() => recordButtonRef.current?.focus());
+        return;
+      }
+    }
+
+    mediaRecorderRef.current = recorder;
+    recordingChunksRef.current = [];
+
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0) recordingChunksRef.current.push(event.data);
+    };
+    recorder.onerror = () => {
+      if (recordingSessionRef.current !== session) return;
+      recordingSessionRef.current += 1;
+      discardRecordingRef.current = true;
+      clearRecordingTimers();
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      if (recorder.state !== "inactive") {
+        try {
+          recorder.stop();
+        } catch {
+          // The microphone is released below even if the recorder cannot stop.
+        }
+      }
+      mediaRecorderRef.current = null;
+      recordingChunksRef.current = [];
+      releaseMicrophone();
+      setRecordingPhase("idle");
+      setRecordingSeconds(0);
+      setError(
+        "録音中にマイクを読み取れなくなりました。接続や会社のマイク利用ポリシーを確認してください。",
+      );
+      setStage("error");
+      window.requestAnimationFrame(() => recordButtonRef.current?.focus());
+    };
+    recorder.onstop = () => {
+      clearRecordingTimers();
+      releaseMicrophone();
+      mediaRecorderRef.current = null;
+      const chunks = recordingChunksRef.current;
+      recordingChunksRef.current = [];
+      const discarded =
+        discardRecordingRef.current || recordingSessionRef.current !== session;
+      setRecordingPhase("idle");
+      setRecordingSeconds(0);
+      if (discarded) {
+        setSourceStatus("録音をキャンセルしました。");
+        window.requestAnimationFrame(() => recordButtonRef.current?.focus());
+        return;
+      }
+
+      const mimeType = recorder.mimeType || requestedMimeType || "audio/webm";
+      const recording = new Blob(chunks, { type: mimeType });
+      if (recording.size === 0) {
+        setError("録音データを作れませんでした。もう一度試してください。");
+        setStage("error");
+        return;
+      }
+
+      const file = new File(
+        [recording],
+        recordingFileName(new Date(), mimeType),
+        { type: mimeType, lastModified: Date.now() },
+      );
+      const recordedDuration = Math.min(
+        MAX_AUDIO_SECONDS,
+        Math.max(0.1, (performance.now() - recordingStartedAtRef.current) / 1_000),
+      );
+      void loadFile(file, "recording", true, recordedDuration);
+    };
+
+    try {
+      recorder.start(1_000);
+    } catch (caught) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      mediaRecorderRef.current = null;
+      releaseMicrophone();
+      setRecordingPhase("idle");
+      setError(microphoneErrorMessage(caught));
+      setStage("error");
+      window.requestAnimationFrame(() => recordButtonRef.current?.focus());
+      return;
+    }
+
+    clearSelectedSource();
+    resetOutput();
+    setStage("idle");
+    recordingStartedAtRef.current = performance.now();
+    setRecordingPhase("recording");
+    recordingTimerRef.current = window.setInterval(() => {
+      setRecordingSeconds(
+        Math.min(
+          MAX_AUDIO_SECONDS,
+          Math.floor((performance.now() - recordingStartedAtRef.current) / 1_000),
+        ),
+      );
+    }, 250);
+    recordingStopTimerRef.current = window.setTimeout(() => {
+      if (recorder.state === "recording") {
+        setRecordingPhase("stopping");
+        recorder.stop();
+      }
+    }, MAX_AUDIO_SECONDS * 1_000 - 250);
+  }, [
+    clearRecordingTimers,
+    clearSelectedSource,
+    isLocked,
+    loadFile,
+    recordingSupported,
+    releaseMicrophone,
+    resetOutput,
+  ]);
+
+  const stopRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state !== "recording") return;
+    setRecordingPhase("stopping");
+    recorder.stop();
+  };
+
+  const cancelRecording = () => {
+    recordingSessionRef.current += 1;
+    discardRecordingRef.current = true;
+    clearRecordingTimers();
+    const recorder = mediaRecorderRef.current;
+    if (recorder && recorder.state !== "inactive") {
+      setRecordingPhase("stopping");
+      recorder.stop();
+      return;
+    }
+    releaseMicrophone();
+    mediaRecorderRef.current = null;
+    recordingChunksRef.current = [];
+    setRecordingSeconds(0);
+    setRecordingPhase("idle");
+    setSourceStatus("録音をキャンセルしました。");
+    window.requestAnimationFrame(() => recordButtonRef.current?.focus());
   };
 
   const startTranscription = () => {
@@ -616,19 +943,67 @@ export default function LocalWhisper() {
       : MODEL_OPTIONS[model].cpuDownload;
 
   const statusMessage =
-    stage === "decoding"
-      ? "音声ファイルを読み込んでいます。"
-      : stage === "loading-model"
-        ? "文字起こしエンジンを準備しています。"
-        : stage === "transcribing"
-          ? "端末内で文字起こししています。"
-          : stage === "complete"
-            ? "文字起こしが完了しました。結果欄に移動します。"
-            : stage === "cancelled"
-              ? "文字起こしを中止しました。"
-              : "";
+    recordingPhase === "requesting"
+      ? "マイクの許可を待っています。"
+      : recordingPhase === "recording"
+        ? "端末内で録音しています。"
+        : recordingPhase === "stopping"
+          ? "録音を終了しています。"
+          : stage === "decoding"
+            ? "素材の音声を読み込んでいます。"
+            : stage === "loading-model"
+              ? "文字起こしエンジンを準備しています。"
+              : stage === "transcribing"
+                ? "端末内で文字起こししています。"
+                : stage === "complete"
+                  ? "文字起こしが完了しました。結果欄に移動します。"
+                  : stage === "cancelled"
+                    ? "文字起こしを中止しました。"
+                    : sourceStatus;
 
   const renderResultPanel = () => {
+    if (isRecordingActive) {
+      const requesting = recordingPhase === "requesting";
+      const stopping = recordingPhase === "stopping";
+      return (
+        <div className="recording-view">
+          <div className="recording-orb" aria-hidden="true">
+            <span />
+          </div>
+          <span className="section-kicker">RECORD / 02</span>
+          <h2>
+            {requesting
+              ? "マイクを確認中"
+              : stopping
+                ? "録音を仕上げ中"
+                : "録音しています"}
+          </h2>
+          <strong className="recording-clock" aria-hidden="true">
+            {formatDuration(recordingSeconds)} / 1:30
+          </strong>
+          <p>
+            {requesting
+              ? "ブラウザのマイク許可を確認してください。"
+              : stopping
+                ? "録音した音声をこの端末内で読み込んでいます。"
+                : "録音中と処理中はブラウザが一時保持します。アプリは永続保存・送信しません。"}
+          </p>
+          <div className="recording-actions">
+            {recordingPhase === "recording" && (
+              <button className="button button-primary" onClick={stopRecording}>
+                録音を終了
+              </button>
+            )}
+            {!stopping && (
+              <button className="button button-ghost" onClick={cancelRecording}>
+                キャンセル
+              </button>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     if (stage === "complete") {
       return (
         <div className="result-view">
@@ -779,7 +1154,7 @@ export default function LocalWhisper() {
         <p>
           {selectedAudio
             ? "言語とモデルを選び、文字起こしを開始してください。"
-            : "左側から音声ファイルを選んでください。"}
+            : "左側から音声・動画を選ぶか、その場で録音してください。"}
         </p>
         <div className="empty-specs" aria-label="機能概要">
           <span>90 SEC MAX</span>
@@ -824,9 +1199,9 @@ export default function LocalWhisper() {
             文字にする。
           </h1>
           <p className="hero-lead">
-            1分前後の音声を、ブラウザ内のWhisperで文字起こし。
+            音声・動画・その場の録音を、ブラウザ内のWhisperで文字起こし。
             <br />
-            インストールもログインも、音声のアップロードも不要です。
+            インストールもログインも、素材のアップロードも不要です。
           </p>
         </div>
         <div className="hero-stats" aria-label="特徴">
@@ -837,7 +1212,7 @@ export default function LocalWhisper() {
           </div>
           <div>
             <strong>02</strong>
-            <span>AUDIO UPLOAD</span>
+            <span>MEDIA UPLOAD</span>
             <b>なし</b>
           </div>
           <div>
@@ -850,7 +1225,7 @@ export default function LocalWhisper() {
 
       <div className="privacy-ribbon" role="note">
         <span className="shield-mark" aria-hidden="true">✓</span>
-        <strong>音声と文字は、このブラウザの外へ出ません。</strong>
+        <strong>素材と文字は、アプリのサーバーへ送信しません。</strong>
         <span>初回のみ文字起こしモデルをダウンロードします。</span>
       </div>
 
@@ -859,34 +1234,62 @@ export default function LocalWhisper() {
           <div className="panel-heading">
             <div>
               <span className="section-kicker">INPUT / 01</span>
-              <h2>音声を選ぶ</h2>
+              <h2>音声を用意する</h2>
             </div>
-            <span className="format-hint">WAV · MP3 · M4A · WEBM</span>
+            <span className="format-hint">AUDIO · VIDEO · MIC</span>
           </div>
 
           {!selectedAudio ? (
-            <label
-              className={`drop-zone ${isDragging ? "is-dragging" : ""}`}
-              onDragOver={(event) => {
-                event.preventDefault();
-                setIsDragging(true);
-              }}
-              onDragLeave={() => setIsDragging(false)}
-              onDrop={onDrop}
-            >
-              <input
-                type="file"
-                accept="audio/*,.wav,.mp3,.m4a,.aac,.webm,.ogg"
-                onChange={onFileInput}
-                disabled={isLocked}
-              />
-              <span className="add-mark" aria-hidden="true">＋</span>
-              <strong>
-                {stage === "decoding" ? "音声を読み込み中…" : "音声ファイルをドロップ"}
-              </strong>
-              <span>またはクリックして選ぶ</span>
-              <small>90秒以内 · 25 MBまで</small>
-            </label>
+            <div className="source-picker">
+              <label
+                className={`drop-zone ${isDragging ? "is-dragging" : ""}`}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  setIsDragging(true);
+                }}
+                onDragLeave={() => setIsDragging(false)}
+                onDrop={onDrop}
+              >
+                <input
+                  type="file"
+                  accept="audio/*,video/mp4,video/webm,video/quicktime,.wav,.mp3,.m4a,.aac,.webm,.ogg,.mp4,.m4v,.mov"
+                  onChange={onFileInput}
+                  disabled={isLocked}
+                />
+                <span className="add-mark" aria-hidden="true">＋</span>
+                <strong>
+                  {stage === "decoding"
+                    ? "素材を読み込み中…"
+                    : "音声・動画をドロップ"}
+                </strong>
+                <span>またはクリックして選ぶ</span>
+                <small>90秒以内 · 音声25 MB / 動画100 MB</small>
+              </label>
+
+              <div className="source-divider" aria-hidden="true">
+                <span>OR</span>
+              </div>
+
+              <button
+                ref={recordButtonRef}
+                className="record-button"
+                onClick={() => void startRecording()}
+                disabled={isLocked || recordingSupported !== true}
+                type="button"
+              >
+                <span className="record-dot" aria-hidden="true" />
+                <span>
+                  <strong>この場で録音</strong>
+                  <small>
+                    {recordingSupported === null
+                      ? "マイク機能を確認中"
+                      : recordingSupported
+                        ? "最大90秒 · アプリから保存・送信なし"
+                        : "この環境ではマイクを利用できません"}
+                  </small>
+                </span>
+              </button>
+            </div>
           ) : (
             <div className="selected-file">
               <div className="file-topline">
@@ -898,6 +1301,12 @@ export default function LocalWhisper() {
                 <div className="file-name">
                   <strong title={selectedAudio.file.name}>{selectedAudio.file.name}</strong>
                   <span>
+                    {selectedAudio.sourceKind === "recording"
+                      ? "マイク録音"
+                      : selectedAudio.sourceKind === "video"
+                        ? "動画の音声トラック"
+                        : "音声ファイル"}
+                    {" · "}
                     {formatDuration(selectedAudio.duration)} · {formatBytes(selectedAudio.file.size)}
                   </span>
                 </div>
@@ -905,14 +1314,20 @@ export default function LocalWhisper() {
                   className="remove-file"
                   onClick={removeFile}
                   disabled={isLocked}
-                  aria-label="音声ファイルを外す"
+                  aria-label="選択した素材を外す"
                 >
                   ×
                 </button>
               </div>
-              <audio controls preload="metadata" src={selectedAudio.url}>
-                お使いのブラウザは音声再生に対応していません。
-              </audio>
+              {selectedAudio.sourceKind === "video" ? (
+                <video controls playsInline preload="metadata" src={selectedAudio.url}>
+                  お使いのブラウザは動画再生に対応していません。
+                </video>
+              ) : (
+                <audio controls preload="metadata" src={selectedAudio.url}>
+                  お使いのブラウザは音声再生に対応していません。
+                </audio>
+              )}
             </div>
           )}
 
@@ -975,6 +1390,7 @@ export default function LocalWhisper() {
           </div>
 
           <button
+            ref={startButtonRef}
             className="start-button"
             onClick={startTranscription}
             disabled={!selectedAudio || isLocked || gpuAvailable === null}
@@ -996,7 +1412,7 @@ export default function LocalWhisper() {
           <li>
             <span>01</span>
             <strong>ブラウザで読み込む</strong>
-            <p>選んだ音声は端末のメモリ上だけで開きます。</p>
+            <p>素材はブラウザ内で一時処理し、アプリのサーバーへ送りません。</p>
           </li>
           <li>
             <span>02</span>
@@ -1018,8 +1434,7 @@ export default function LocalWhisper() {
         </div>
         <div className="privacy-copy">
           <p>
-            音声ファイルと文字起こし結果はサーバーへ送信せず、保存もしません。初回のみHugging
-            FaceからWhisperモデルを取得し、モデルだけをブラウザにキャッシュします。
+            アプリは音声・動画・録音と文字起こし結果をサーバーへ送信・永続保存しません。処理中はブラウザが一時保持します。初回のみHugging FaceからWhisperモデルを取得し、モデルだけをブラウザにキャッシュします。
           </p>
           <p>
             社内ネットワークがモデル取得を制限する場合があります。また、録音対象者の同意や会社の情報管理ルールは利用前に確認してください。

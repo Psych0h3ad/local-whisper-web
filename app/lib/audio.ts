@@ -1,4 +1,10 @@
-import { MAX_AUDIO_SECONDS, MAX_FILE_BYTES } from "./whisper";
+import {
+  MAX_AUDIO_FILE_BYTES,
+  MAX_AUDIO_SECONDS,
+  MAX_VIDEO_FILE_BYTES,
+} from "./whisper";
+
+export type MediaKind = "audio" | "video";
 
 export interface DecodedAudio {
   samples: Float32Array;
@@ -10,6 +16,18 @@ export class AudioValidationError extends Error {
     super(message);
     this.name = "AudioValidationError";
   }
+}
+
+export function getMediaKind(
+  file: Pick<File, "name" | "type">,
+): MediaKind {
+  if (file.type.toLowerCase().startsWith("video/")) return "video";
+  if (file.type.toLowerCase().startsWith("audio/")) return "audio";
+  return /\.(?:mp4|m4v|mov|webm)$/i.test(file.name) ? "video" : "audio";
+}
+
+export function getMediaFileLimit(kind: MediaKind): number {
+  return kind === "video" ? MAX_VIDEO_FILE_BYTES : MAX_AUDIO_FILE_BYTES;
 }
 
 export function formatDuration(seconds: number): string {
@@ -60,61 +78,92 @@ export function resampleLinear(
   return output;
 }
 
-async function readAudioDuration(file: File): Promise<number> {
+async function readMediaDuration(
+  file: File,
+  kind: MediaKind,
+): Promise<number> {
   const url = URL.createObjectURL(file);
-  const audio = document.createElement("audio");
-  audio.preload = "metadata";
+  const media = document.createElement(kind === "video" ? "video" : "audio");
+  media.preload = "metadata";
 
   try {
     return await new Promise<number>((resolve, reject) => {
       const timeout = window.setTimeout(() => {
         cleanup();
-        reject(new AudioValidationError("音声の長さを確認できませんでした。"));
+        reject(
+          new AudioValidationError(
+            kind === "video"
+              ? "動画の長さを確認できませんでした。"
+              : "音声の長さを確認できませんでした。",
+          ),
+        );
       }, 15_000);
       const cleanup = () => {
         window.clearTimeout(timeout);
-        audio.onloadedmetadata = null;
-        audio.onerror = null;
-        audio.removeAttribute("src");
-        audio.load();
+        media.onloadedmetadata = null;
+        media.onerror = null;
+        media.removeAttribute("src");
+        media.load();
       };
 
-      audio.onloadedmetadata = () => {
-        const duration = audio.duration;
+      media.onloadedmetadata = () => {
+        const duration = media.duration;
         cleanup();
         if (!Number.isFinite(duration) || duration <= 0) {
-          reject(new AudioValidationError("この音声の長さを確認できません。"));
+          reject(
+            new AudioValidationError(
+              kind === "video"
+                ? "この動画の長さを確認できません。"
+                : "この音声の長さを確認できません。",
+            ),
+          );
           return;
         }
         resolve(duration);
       };
-      audio.onerror = () => {
+      media.onerror = () => {
         cleanup();
         reject(
           new AudioValidationError(
-            "この音声を読み込めません。WAVまたはMP3で試してください。",
+            kind === "video"
+              ? "この動画を読み込めません。MP4、WebM、MOVで試してください。"
+              : "この音声を読み込めません。WAV、MP3、M4A、WebMで試してください。",
           ),
         );
       };
-      audio.src = url;
+      media.src = url;
     });
   } finally {
     URL.revokeObjectURL(url);
   }
 }
 
-export async function decodeAudioFile(file: File): Promise<DecodedAudio> {
+export async function decodeAudioFile(
+  file: File,
+  knownDuration?: number,
+): Promise<DecodedAudio> {
+  const kind = getMediaKind(file);
   if (file.size === 0) {
     throw new AudioValidationError("空のファイルは読み込めません。");
   }
-  if (file.size > MAX_FILE_BYTES) {
-    throw new AudioValidationError("25 MB以下の音声ファイルを選んでください。");
+  if (file.size > getMediaFileLimit(kind)) {
+    throw new AudioValidationError(
+      kind === "video"
+        ? "100 MB以下の動画ファイルを選んでください。"
+        : "25 MB以下の音声ファイルを選んでください。",
+    );
   }
 
-  const metadataDuration = await readAudioDuration(file);
+  const hasKnownDuration =
+    typeof knownDuration === "number" &&
+    Number.isFinite(knownDuration) &&
+    knownDuration > 0;
+  const metadataDuration = hasKnownDuration
+    ? knownDuration
+    : await readMediaDuration(file, kind);
   if (metadataDuration > MAX_AUDIO_SECONDS + 0.05) {
     throw new AudioValidationError(
-      `90秒を超える音声は処理できません（現在 ${formatDuration(metadataDuration)}）。`,
+      `90秒を超える素材は処理できません（現在 ${formatDuration(metadataDuration)}）。`,
     );
   }
 
@@ -129,12 +178,23 @@ export async function decodeAudioFile(file: File): Promise<DecodedAudio> {
     );
   }
 
-  const context = new AudioContextClass({ sampleRate: 16_000 });
+  let context: AudioContext;
+  try {
+    context = new AudioContextClass({ sampleRate: 16_000 });
+  } catch {
+    try {
+      context = new AudioContextClass();
+    } catch {
+      throw new AudioValidationError(
+        "このブラウザでは音声処理を開始できません。タブを閉じて再度試してください。",
+      );
+    }
+  }
   try {
     const buffer = await context.decodeAudioData(await file.arrayBuffer());
     if (buffer.duration > MAX_AUDIO_SECONDS + 0.05) {
       throw new AudioValidationError(
-        `90秒を超える音声は処理できません（現在 ${formatDuration(buffer.duration)}）。`,
+        `90秒を超える素材は処理できません（現在 ${formatDuration(buffer.duration)}）。`,
       );
     }
 
@@ -146,7 +206,9 @@ export async function decodeAudioFile(file: File): Promise<DecodedAudio> {
   } catch (error) {
     if (error instanceof AudioValidationError) throw error;
     throw new AudioValidationError(
-      "この音声を読み込めません。WAVまたはMP3で試してください。",
+      kind === "video"
+        ? "音声トラックがないか、コーデック非対応の動画です。MP4またはWebMで試してください。"
+        : "この音声を読み込めません。WAV、MP3、M4A、WebMで試してください。",
     );
   } finally {
     await context.close().catch(() => undefined);

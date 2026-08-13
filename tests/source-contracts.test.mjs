@@ -27,30 +27,59 @@ test("pins the browser inference stack and model revisions", async () => {
   assert.doesNotMatch(models, /自動判定|\"auto\"/);
 });
 
-test("keeps audio local and provides explicit cache removal", async () => {
-  const [client, audio, worker, models] = await Promise.all([
+test("keeps media local and provides explicit cache removal", async () => {
+  const [client, audio, recording, worker, models, packageJson] = await Promise.all([
     read("app/LocalWhisper.tsx"),
     read("app/lib/audio.ts"),
+    read("app/lib/recording.ts"),
     read("app/workers/whisper.worker.ts"),
     read("app/lib/whisper.ts"),
+    read("package.json").then(JSON.parse),
   ]);
-  const productSource = `${client}\n${audio}\n${worker}`;
+  const productSource = `${client}\n${audio}\n${recording}\n${worker}`;
 
   assert.doesNotMatch(productSource, /FormData|XMLHttpRequest|sendBeacon/);
   assert.doesNotMatch(productSource, /localStorage|sessionStorage/);
+  assert.doesNotMatch(JSON.stringify(packageJson), /ffmpeg/i);
   assert.match(client, /window\.caches\.delete\(MODEL_CACHE_NAME\)/);
   assert.match(client, /spellCheck=\{false\}/);
   assert.match(client, /requestConfigRef/);
   assert.match(client, /destroyWorker\(currentWorker\)/);
-  assert.match(audio, /readAudioDuration\(file\)/);
+  assert.match(client, /decodeIdRef\.current \+= 1;[\s\S]*?workerRef\.current\?\.terminate\(\)/);
+  assert.match(audio, /readMediaDuration\(file, kind\)/);
   assert.ok(
-    audio.indexOf("readAudioDuration(file)") <
+    audio.indexOf("readMediaDuration(file, kind)") <
       audio.indexOf("context.decodeAudioData"),
-    "duration preflight must run before full PCM decoding",
+    "duration preflight must run before full media decoding",
   );
+  assert.match(audio, /MAX_AUDIO_FILE_BYTES/);
+  assert.match(audio, /MAX_VIDEO_FILE_BYTES/);
+  assert.match(audio, /音声トラックがないか/);
   assert.match(worker, /shouldSkipGpuFallback/);
   assert.match(models, /MODEL_CACHE_NAME = "transformers-cache"/);
-  assert.match(client, /音声ファイルと文字起こし結果はサーバーへ送信せず、保存もしません/);
+  assert.match(client, /アプリは音声・動画・録音と文字起こし結果をサーバーへ送信・永続保存しません/);
+});
+
+test("records microphone audio only and releases every acquired track", async () => {
+  const [client, recording, server] = await Promise.all([
+    read("app/LocalWhisper.tsx"),
+    read("app/lib/recording.ts"),
+    read("worker/index.ts"),
+  ]);
+
+  assert.match(client, /navigator\.mediaDevices\.getUserMedia\(\{/);
+  assert.match(client, /audio:\s*\{[\s\S]*?video:\s*false/);
+  assert.doesNotMatch(client, /getDisplayMedia|enumerateDevices/);
+  assert.match(client, /new MediaRecorder\(/);
+  assert.match(client, /audioBitsPerSecond:\s*64_000/);
+  assert.match(client, /MAX_AUDIO_SECONDS \* 1_000 - 250/);
+  assert.match(client, /getTracks\(\)\.forEach\(\(track\) => track\.stop\(\)\)/);
+  assert.match(client, /window\.addEventListener\("pagehide"/);
+  assert.match(client, /void loadFile\(file, "recording", true, recordedDuration\)/);
+  assert.match(recording, /MediaRecorder\.isTypeSupported|isTypeSupported/);
+  assert.match(server, /"microphone=\(self\)"/);
+  assert.match(server, /"camera=\(\)"/);
+  assert.match(server, /"display-capture=\(\)"/);
 });
 
 test("ships one local ONNX runtime and a dedicated inference worker", async () => {

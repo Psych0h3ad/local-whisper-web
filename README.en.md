@@ -1,6 +1,6 @@
 # Local Whisper Web
 
-Install-free, privacy-first speech-to-text in the browser. Audio files and transcripts are processed on the device and are not uploaded to an application server.
+Install-free, privacy-first speech-to-text in the browser. Audio files, video audio tracks, microphone recordings, and transcripts are processed on the device and are not uploaded to an application server.
 
 > This is STT / ASR (speech to text), not TTS (text to speech).
 
@@ -8,7 +8,9 @@ Install-free, privacy-first speech-to-text in the browser. Audio files and trans
 
 ## Features
 
-- Transcribe audio up to 90 seconds and 25 MB
+- Transcribe audio files up to 90 seconds and 25 MB
+- Extract and transcribe the audio track of a video up to 90 seconds and 100 MB, entirely on the device
+- Record up to 90 seconds from the microphone in the browser
 - Explicit Japanese, English, or Chinese selection
 - Prefer WebGPU on supported Chrome / Edge installations
 - Fall back to WASM / CPU where WebGPU is unavailable
@@ -16,20 +18,20 @@ Install-free, privacy-first speech-to-text in the browser. Audio files and trans
 - Choose Whisper base for quality or Whisper tiny for lower resource use
 - Remove cached model files from the UI
 
-There is no audio upload, account, analytics tag, or cloud transcript storage.
+There is no audio, video, or microphone-recording upload, account, analytics tag, or cloud transcript storage.
 
 ## How data moves
 
 ```text
-Audio file
-  → Decode and convert to 16 kHz mono with AudioContext
+Audio file / video audio track / microphone recording
+  → Decode in the browser and convert to 16 kHz mono with AudioContext
   → Run Whisper in a Web Worker with ONNX Runtime Web
   → Return text to the page
 ```
 
-Audio and transcripts remain in memory and are not written to browser storage. On first use, model files are downloaded from Hugging Face and may be stored in the browser Cache API. Requests to `huggingface.co` can redirect to Hugging Face CDN hosts (currently including `*.cdn.hf.co`), so managed networks may need to allow the redirect destination as well.
+The application does not persist or send input data or transcripts. During processing, the browser may hold media in memory or its own temporary storage. On first use, model files are downloaded from Hugging Face and may be stored in the browser Cache API. Requests to `huggingface.co` can redirect to Hugging Face CDN hosts (currently including `*.cdn.hf.co`), so managed networks may need to allow the redirect destination as well.
 
-The site hosting/CDN provider may process or retain ordinary access metadata while serving the page and assets, such as IP address, User-Agent, requested URL, and timestamp. Those requests do not contain audio or transcript data. Application analytics and Workers Observability are disabled.
+The site hosting/CDN provider may process or retain ordinary access metadata while serving the page and assets, such as IP address, User-Agent, requested URL, and timestamp. Those requests do not contain audio, video, microphone recordings, or transcript data. Application analytics and Workers Observability are disabled.
 
 Choosing “Copy” moves the transcript outside the application to the operating-system clipboard. From that point, clipboard history or sync, DLP software, remote-desktop software, and the OS are separate data boundaries. Downloaded TXT/JSON files likewise become ordinary local files. See [PRIVACY.md](PRIVACY.md).
 
@@ -47,11 +49,12 @@ The ONNX Runtime WASM (~22 MB) and application assets are served from the same o
 ## Browser support
 
 - Recommended: current Chrome or Edge on Windows and macOS
-- Firefox and Safari use the WASM / CPU path; speed and codec support vary
-- Official inputs: WAV and MP3
-- M4A, AAC, WebM, and OGG work when the browser can decode the codec
+- Firefox and Safari use the WASM / CPU path; speed, recording support, and codec support vary
+- Audio: WAV and MP3 are officially supported. M4A, AAC, WebM, and OGG work when the browser can decode the codec
+- Video: MP4 (H.264 / AAC) and WebM (VP9 / Opus) have been tested in current Chrome. In Edge and other browsers, MOV and all other container/codec combinations depend on browser support
+- Microphone recording requires HTTPS, a user click on the record button, and browser permission. The application requests audio input only, never the camera or screen sharing
 
-Managed computers may restrict WebGPU, Web Workers, WebAssembly, browser caches, or access to `huggingface.co`. “No installation” does not automatically mean “approved by your organization.”
+Managed computers may restrict the microphone, WebGPU, Web Workers, WebAssembly, browser caches, or access to `huggingface.co`. “No installation” does not automatically mean “approved by your organization.” Obtain consent from everyone being recorded and confirm your organization’s policy before use.
 
 ## Development
 
@@ -92,8 +95,10 @@ Model revisions are fixed in `app/lib/whisper.ts`. Model weights are downloaded 
 ## Known limitations
 
 - Speech recognition can be wrong or hallucinate text
-- No speaker diarization, microphone capture, live transcription, or translation
-- v0.1 does not export subtitle timestamps
+- No speaker diarization, live transcription, or translation. Microphone audio is transcribed after recording stops
+- No direct capture of system audio or browser-tab audio
+- For video, only the audio track is transcribed. Container and codec support depend on the browser, and the application does not export an extracted audio file
+- Subtitle timestamps are not exported
 - Corporate proxies may block the first model download
 - WASM speed depends on the device and organizational browser policy and is slower than GPU
 - Users remain responsible for recording consent, confidential data, and organizational policy

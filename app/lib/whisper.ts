@@ -1,5 +1,6 @@
 export const MAX_AUDIO_SECONDS = 90;
-export const MAX_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_AUDIO_FILE_BYTES = 25 * 1024 * 1024;
+export const MAX_VIDEO_FILE_BYTES = 100 * 1024 * 1024;
 export const MODEL_CACHE_NAME = "transformers-cache";
 
 export type ModelKey = "base" | "tiny";
