@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Generate and validate complete CycloneDX SBOM
+        run: npm run sbom -- artifacts/local-whisper-web.cdx.json
+      - name: Upload CycloneDX SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: local-whisper-web-sbom
+          path: artifacts/local-whisper-web.cdx.json
+          if-no-files-found: error
+      - run: npm audit --audit-level=high

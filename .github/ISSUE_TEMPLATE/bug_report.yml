@@ -1,0 +1,45 @@
+name: Bug report
+description: Report a reproducible problem without sharing sensitive audio.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never attach confidential recordings, personal data, or audio you do not have permission to share. Prefer a synthetic or openly licensed sample.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include the exact error message and what you expected.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and browser name/version.
+      placeholder: Windows 11, Edge 136
+    validations:
+      required: true
+  - type: input
+    id: audio
+    attributes:
+      label: Audio details
+      description: Format, duration, language, selected model, and GPU/CPU path. Do not include private content.
+      placeholder: WAV, 58 sec, Japanese, tiny, WASM
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Privacy check
+      options:
+        - label: I have not included confidential, personal, or unauthorized audio/data.
+          required: true
