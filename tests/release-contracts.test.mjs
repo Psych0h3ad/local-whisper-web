@@ -47,6 +47,7 @@ test("ships major third-party license texts in the deployment artifact", async (
     "MIT-ONNX-Runtime.txt",
     "MIT-React.txt",
     "MIT-vinext.txt",
+    "OFL-1.1-Geist.txt",
     "README.txt",
   ];
 
@@ -62,6 +63,10 @@ test("ships major third-party license texts in the deployment artifact", async (
   assert.match(
     await read("public/third-party-licenses/MIT-ONNX-Runtime.txt"),
     /Copyright \(c\) Microsoft Corporation/,
+  );
+  assert.match(
+    await read("public/third-party-licenses/OFL-1.1-Geist.txt"),
+    /SIL OPEN FONT LICENSE Version 1\.1/,
   );
 
   const [lockfile, notices] = await Promise.all([

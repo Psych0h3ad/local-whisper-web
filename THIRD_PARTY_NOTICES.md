@@ -12,6 +12,7 @@ Local Whisper Web application code is licensed under MIT. The following componen
 | React / React DOM | 19.2.8 | MIT | https://github.com/facebook/react |
 | Next.js | 16.3.0 | MIT | https://github.com/vercel/next.js |
 | vinext | 0.0.45 | MIT | https://github.com/cloudflare/vinext |
+| Geist / Geist Mono webfonts | Build-time snapshot | OFL-1.1 | https://github.com/vercel/geist-font |
 
 The ONNX Runtime WebAssembly binary and its JavaScript factory are copied into the application build from the installed Transformers.js package so they can be served from the application origin.
 
@@ -23,6 +24,7 @@ Full license texts and copyright notices for these major browser-delivered compo
 - [MIT — React and React DOM](public/third-party-licenses/MIT-React.txt)
 - [MIT — Next.js](public/third-party-licenses/MIT-Next.js.txt)
 - [MIT — vinext](public/third-party-licenses/MIT-vinext.txt)
+- [SIL Open Font License 1.1 — Geist and Geist Mono](public/third-party-licenses/OFL-1.1-Geist.txt)
 
 ## Whisper models
 
